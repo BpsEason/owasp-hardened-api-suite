@@ -1,0 +1,165 @@
+stages:
+  - build
+  - test
+  - security_scan
+  - report
+
+variables:
+  # Laravel 環境變數
+  APP_ENV: production
+  DB_CONNECTION: mysql
+  DB_HOST: mariadb
+  DB_PORT: 3306
+  DB_DATABASE: laravel_db
+  DB_USERNAME: user
+  DB_PASSWORD: password
+
+  # ZAP 報告路徑 (CI 會將其從 zap-reports/zap_report.json 複製到 Runner 根目錄)
+  ZAP_REPORT_PATH: zap-reports/zap_report.json
+  # Pytest 報告路徑 (CI 會將其從 fastapi-tester/pytest-report.xml 複製到 Runner 根目錄)
+  PYTEST_REPORT_PATH: pytest-report.xml
+  # PHPUnit 報告路徑 (CI 會將其從 laravel-app/laravel-report.xml 複製到 Runner 根目錄)
+  PHPUNIT_REPORT_PATH: laravel-report.xml
+  # 最終報告輸出路徑 (CI 會將其從 report/summary.md 複製到 Runner 根目錄)
+  OUTPUT_MARKDOWN_PATH: reports/summary.md # 統一為 reports/summary.md
+
+cache:
+  paths:
+    - laravel-app/vendor/
+    - fastapi-tester/.pytest_cache/
+    - fastapi-tester/__pycache__/
+    - fastapi-tester/venv/
+
+services:
+  - name: mariadb:10.6
+    alias: mariadb
+    environment:
+      MARIADB_ROOT_PASSWORD: root_password
+      MARIADB_DATABASE: laravel_db
+      MARIADB_USER: user
+      MARIADB_PASSWORD: password
+
+build_laravel:
+  stage: build
+  image: docker:latest
+  services:
+    - docker:dind
+  script:
+    - echo "Building Laravel PHP image..."
+    # 使用當前目錄作為上下文，Dockerfile 在 docker/Dockerfile.php
+    - docker build -t my-laravel-app -f docker/Dockerfile.php .
+    - echo "Building FastAPI Tester image..."
+    # 使用當前目錄作為上下文，Dockerfile 在 docker/Dockerfile.fastapi
+    - docker build -t my-fastapi-tester -f docker/Dockerfile.fastapi .
+    - echo "Docker images built."
+
+# laravel_setup 階段用於確保 Laravel 應用程式的 PHP 依賴和資料庫設定在測試前完成
+laravel_setup:
+  stage: test
+  image: my-laravel-app # 使用剛建立的 Laravel 應用程式映像
+  before_script:
+    - echo "Installing Composer dependencies..."
+    # 由於 Dockerfile.php 中已經安裝了 composer，這裡直接執行 install
+    - composer install --no-dev --prefer-dist --optimize-autoloader
+    - echo "Generating application key..."
+    - php artisan key:generate --force
+    - echo "Installing Sanctum..."
+    - php artisan vendor:publish --provider="Laravel\Sanctum\SanctumServiceProvider" --tag="sanctum-config" || true
+    - echo "Running database migrations and seeding..."
+    - php artisan migrate --seed --force # 確保資料庫存在並填充數據
+  script:
+    - echo "Laravel application setup complete."
+  artifacts:
+    # 緩存 vendor 目錄，以便後續測試階段使用
+    paths:
+      - laravel-app/vendor/
+    expire_in: 1 day # 緩存一天
+
+run_php_unit_tests:
+  stage: test
+  image: my-laravel-app
+  variables:
+    XDEBUG_MODE: coverage # 啟用代碼覆蓋率模式，如果需要
+  script:
+    - echo "Running Laravel PHPUnit tests..."
+    # 確保 PHPUnit 報告輸出到可以訪問的位置 (laravel-app 容器的根目錄下)
+    - ./vendor/bin/phpunit --log-junit laravel-report.xml
+  artifacts:
+    # 收集 PHPUnit 報告
+    paths:
+      - laravel-app/laravel-report.xml
+    expire_in: 1 day
+    when: always # 無論測試成功或失敗都保存報告
+
+run_fastapi_tests:
+  stage: test
+  image: my-fastapi-tester
+  script:
+    - echo "Running FastAPI Tester security tests..."
+    # 確保 Pytest 報告輸出到可以訪問的位置 (fastapi-tester 容器的根目錄下)
+    - pytest tests/test_security.py --junitxml=pytest-report.xml
+  artifacts:
+    # 收集 Pytest 報告
+    paths:
+      - fastapi-tester/pytest-report.xml
+    expire_in: 1 day
+    when: always # 無論測試成功或失敗都保存報告
+
+security_scan:
+  stage: security_scan
+  image:
+    name: owasp/zap2docker-stable:latest
+    entrypoint: [""]
+  variables:
+    ZAP_TARGET_URL: http://nginx:80
+  script:
+    - echo "啟動 ZAP 守護進程..."
+    - zap.sh -daemon -host 0.0.0.0 -port 8080 -config api.disablekey=true &
+    - sleep 10
+    - echo "運行 OWASP ZAP DAST 掃描 Laravel API..."
+    - mkdir -p zap-reports # 確保報告目錄存在於 Runner 的工作目錄
+    # ZAP CLI 的 openapi 命令可以直接讀取本地文件或 URL
+    # 這裡我們讓它透過網路訪問 Nginx 提供的 /openapi.json
+    - zap-cli --port 8080 --host 0.0.0.0 -v \
+      openapi ${ZAP_TARGET_URL}/openapi.json \ # ZAP 透過網路訪問 Nginx 提供的 OpenAPI 文件
+      spider ${ZAP_TARGET_URL} \
+      active_scan ${ZAP_TARGET_URL} \
+      report /zap/wrk/zap_report.json || true
+  artifacts:
+    paths:
+      - zap-reports/zap_report.json
+    expire_in: 1 day
+    when: always
+  # 移除此處的 volumes 掛載。
+  # ZAP 掃描器在 security_scan 階段，其主要工作是透過 HTTP 訪問服務。
+  # 除非 ZAP 需要直接讀取工作目錄下的 local openapi.json 文件進行 "import"
+  # 否則透過 `ZAP_TARGET_URL/openapi.json` 即可。
+  # 如果 `zap-cli openapi` 的參數是文件路徑，則需要掛載。
+  # 但根據之前的設定和常見用法，它通常透過 URL 獲取。
+  # 我們需要確認 ZAP 的 `openapi` 命令是需要 URL 還是文件路徑。
+  # 根據 `zap-cli openapi` 的文檔，它通常接受 URL。
+  # 因此，這個 `volumes` 掛載對於 ZAP 讀取 `openapi.json` 並非必需，因為 Nginx 已經提供了該文件。
+  # 但為了確保 ZAP 報告能夠寫入 Runner 的 `zap-reports` 目錄，報告目錄的卷掛載是必要的。
+  volumes:
+    - ./zap-reports:/zap/wrk:rw # 確保 ZAP 能將報告寫入 Runner 的工作目錄
+
+generate_security_report:
+  stage: report
+  image: python:3.9-slim-buster
+  script:
+    - echo "安裝報告生成腳本的依賴..."
+    - pip install lxml # 確保解析 XML 所需的庫
+    - echo "生成綜合安全報告..."
+    # 將所有報告文件從 artifact 複製到 Runner 的當前工作目錄
+    # 這些文件會由前續階段的 artifact 設置自動複製到此處的根目錄
+    - cp laravel-app/laravel-report.xml . || true # 允許文件不存在，如果前一個 Job 失敗
+    - cp fastapi-tester/pytest-report.xml . || true # 允許文件不存在
+    - python scripts/generate_report.py
+  artifacts:
+    # 收集最終生成的 Markdown 報告
+    paths:
+      - reports/summary.md
+      - zap-reports/zap_report.json # 也將 ZAP 原始 JSON 報告作為 artifact
+    expire_in: 1 week
+    when: always # 無論報告生成結果如何都保存
+
