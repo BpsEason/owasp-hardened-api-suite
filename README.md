@@ -15,33 +15,39 @@
 
 ```mermaid
 graph TD
-    A[用戶] -->|HTTP 請求| B[Nginx]
-    B -->|代理 PHP 請求| C[PHP-FPM]
-    B -->|提供 OpenAPI| D[Laravel API]
-    C --> D
-    D -->|查詢/寫入| E[MariaDB]
-    A -->|Swagger UI| F[FastAPI Tester]
-    F -->|模擬攻擊| B
-    F -->|生成報告| G[Report Generator]
-    H[OWASP ZAP] -->|掃描 API| B
-    H -->|生成 JSON 報告| I[ZAP Reports]
-    G -->|生成 Markdown 報告| J[Reports]
+    A[用戶] -->|HTTP 請求 (API 使用)| B[Nginx]
+    B -->|代理請求| C[PHP-FPM + Laravel API]
+    C -->|查詢/寫入| D[MariaDB]
+    A -->|訪問 Swagger UI| E[FastAPI Tester]
+    E -->|模擬攻擊 (安全測試)| B
+    F[OWASP ZAP] -->|掃描 API (安全測試)| B
+    E -->|生成 Pytest 報告| G[Report Generator]
+    C -->|生成 PHPUnit 報告| G
+    F -->|生成 JSON 報告| H[ZAP Reports]
+    H --> G
+    G -->|生成 Markdown 報告| I[Reports]
     subgraph Docker Network
         B
         C
         D
         E
         F
+    end
+    subgraph 安全測試流程
+        E
+        F
+        G
         H
+        I
     end
 ```
 
-- **Nginx**：處理 HTTP 請求，代理到 PHP-FPM 或 FastAPI（需自行配置）。
-- **Laravel API**：核心代碼提供產品查詢與評論功能，防禦 XSS 和 SQL 注入。
+- **Nginx**：處理 HTTP 請求，代理到 PHP-FPM（需自行配置）。
+- **PHP-FPM + Laravel API**：核心代碼提供產品查詢與評論功能，防禦 XSS 和 SQL 注入。
 - **MariaDB**：儲存資料，需自行設置遷移與種子數據。
-- **FastAPI Tester**：模擬攻擊並執行 Pytest 測試，驗證 API 安全性。
-- **OWASP ZAP**：執行動態安全掃描，需自行設置。
-- **Report Generator**：生成報告，需整合 `generate_report.py`。
+- **FastAPI Tester**：模擬攻擊並執行 Pytest 測試，驗證 API 安全性（由開發者或 CI/CD 觸發）。
+- **OWASP ZAP**：執行動態安全掃描，生成 JSON 報告（需自行設置）。
+- **Report Generator**：整合 PHPUnit、Pytest 和 ZAP 報告，生成 Markdown 報告。
 
 ## 先決條件
 - **Docker** 和 **Docker Compose**：用於容器化環境。
@@ -356,65 +362,65 @@ if __name__ == "__main__":
 ### 系統架構與技術棧
 
 **Q3: 能否解釋一下這個專案的系統架構？各個組件扮演什麼角色？**  
-**A**: 這個專案預期的系統架構是容器化的微服務組合。最前端是 Nginx，它負責處理 HTTP 請求，代理到 PHP-FPM 或提供 OpenAPI。PHP-FPM 服務於 Laravel API。Laravel API 是核心代碼，提供產品查詢與評論功能，防禦 XSS 和 SQL 注入。Laravel API 會與 MariaDB 互動，後者儲存資料。此外，我們還有一個獨立的 FastAPI Tester，它會模擬攻擊發送到 Nginx，並生成報告。OWASP ZAP 則對 Nginx 進行掃描，生成 JSON 報告。最終，Report Generator 會匯集所有報告，生成 Markdown 報告。整個系統預期運行在一個 Docker Network 中。
+**A**: 這個專案預期的系統架構是容器化的微服務組合。最前端是 Nginx，負責處理用戶的 HTTP 請求並代理到 PHP-FPM + Laravel API。PHP-FPM + Laravel API 提供產品查詢與評論功能，防禦 XSS 和 SQL 注入，並與 MariaDB 互動儲存資料。FastAPI Tester 是獨立服務，用於模擬攻擊並發送請求到 Nginx，驗證 API 安全性。OWASP ZAP 對 Nginx 進行動態掃描，生成 JSON 報告。Report Generator 整合 PHPUnit、Pytest 和 ZAP 報告，生成 Markdown 報告。所有服務運行在 Docker 網絡中，安全測試由開發者或 CI/CD 觸發。
 
 **Q4: 這個專案使用了哪些核心技術？您為什麼選擇它們？**  
-**A**: 專案的核心技術棧主要包括：後端 API 使用 PHP 8.2+ 和 Laravel 框架。安全測試部分則採用 Python 3.9+ 和 pip 驅動的 FastAPI 測試器。資料庫我們選擇了 MariaDB。整個環境都是通過 Docker 和 Docker Compose 進行容器化管理。選擇這些技術，是為了兼顧開發效率、安全性特性以及測試的靈活性。例如，Laravel 提供了內建的防禦機制，FastAPI 則適合構建輕量級的自動化測試服務，而 Docker 確保了環境的一致性和可重複性。
+**A**: 專案的核心技術棧主要包括：後端 API 使用 PHP 8.2+ 和 Laravel 框架。安全測試部分則採用 Python 3.9+ 和 pip 驅動的 FastAPI 測試器。資料庫選擇 MariaDB。整個環境通過 Docker 和 Docker Compose 進行容器化管理。選擇這些技術是為了兼顧開發效率、安全性特性以及測試的靈活性。例如，Laravel 提供內建的防禦機制，FastAPI 適合構建輕量級的自動化測試服務，而 Docker 確保環境的一致性和可重複性。
 
 ### 安全防禦與測試
 
 **Q5: 這個 Laravel API 專案是如何防禦 SQL 注入和 XSS 攻擊的？**  
-**A**: 在 Laravel API 中，我們主要通過兩個層面來防禦這些常見攻擊。對於 SQL 注入，我們廣泛使用了 Laravel Eloquent ORM 提供的查詢構建器。例如在 `ProductController` 的 `search` 方法中，當使用 `where('name', 'like', '%' . $request->input('name') . '%')` 時，它會自動使用參數綁定，而不是直接拼接 SQL 字串，從根本上避免了 SQL 注入的風險。對於 XSS（跨站腳本攻擊），我們在處理所有返回給前端的資料時，特別是在 `ProductController` 中，定義了 `Response::jsonEscaped()` 巨集。這個巨集會遍歷 JSON 數據，並對字串內容進行 HTML 實體轉義，確保任何用戶輸入的惡意 HTML 或腳本都以安全的方式呈現，從而防止在前端被執行。
+**A**: 在 Laravel API 中，我們主要通過兩個層面防禦。對於 SQL 注入，使用 Laravel Eloquent ORM 的查詢構建器，例如在 `ProductController` 的 `search` 方法中，`where('name', 'like', '%' . $request->input('name') . '%')` 自動使用參數綁定，避免 SQL 注入風險。對於 XSS，`ProductController` 使用 `Response::jsonEscaped()` 巨集，遍歷 JSON 數據並對字串進行 HTML 實體轉義，確保惡意腳本無法在前端執行。
 
 **Q6: FastAPI Tester 在這個專案中扮演什麼角色？它是如何模擬攻擊的？**  
-**A**: FastAPI Tester 是一個獨立的 Python 服務，扮演著自動化安全測試客戶端的角色。它的核心職責是模擬惡意的 HTTP 請求，發送到 Laravel API，然後分析 API 的響應來判斷防禦是否有效。例如，它定義了 `AttackPayload` 模型來構造各種攻擊數據，並通過 `httpx` 非同步地發送請求。在 `simulate_xss` 中，它會發送包含 `<script>` 標籤的內容，並檢查 Laravel API 的響應是否已將其轉義為 `&lt;script&gt;`。如果原始的 `<script>` 仍然存在，就標記為失敗。它還包含了針對 SQL 注入和認證漏洞的測試邏輯。這些測試都與 Pytest 測試框架集成，可以自動化運行，並生成 `pytest-report.xml` 測試報告。
+**A**: FastAPI Tester 是一個獨立的 Python 服務，扮演自動化安全測試客戶端角色，模擬惡意 HTTP 請求並分析 Laravel API 的響應。例如，它使用 `AttackPayload` 模型構造攻擊數據，通過 `httpx` 發送請求。在 `simulate_xss` 中，發送含 `<script>` 的內容，檢查是否被轉義為 `<script>`。測試與 Pytest 集成，自動運行並生成 `pytest-report.xml` 報告。
 
 **Q7: 專案中是如何整合動態應用程式安全測試（DAST）的？**  
-**A**: 我們將 OWASP ZAP 整合為專案的 DAST 工具。儘管 README 中提到需自行設置 ZAP 容器，但通常會通過 `zap-cli` 命令工具在 CI/CD 流程中進行，它會指向 Laravel API 的 `openapi.json` 規格文件。ZAP 會透過 `openapi` 命令利用 API 規範來引導其探索和掃描過程，接著執行 Spider 和 Active Scan，深入挖掘潛在的漏洞。最終，ZAP 會生成一份 JSON 格式的報告，這份報告會作為 CI/CD 的 Artifact 收集起來，供後續的報告生成階段使用。
+**A**: 我們使用 OWASP ZAP 作為 DAST 工具（需自行設置）。通過 `zap-cli` 命令，ZAP 指向 Laravel API 的 `openapi.json` 進行掃描，執行 Spider 和 Active Scan，挖掘潛在漏洞，並生成 JSON 報告。報告作為 CI/CD Artifact，供後續報告生成使用。
 
 ### CI/CD 與報告
 
 **Q8: 專案中的 CI/CD 流程是怎樣的？各個階段的作用是什麼？**  
-**A**: 這個專案設計了一個典型的 CI/CD 流程，儘管 README 中說需自行撰寫 `.gitlab-ci.yml`，但它預期包含幾個主要階段：`build`、`test`、`security_scan` 和 `report`。`build` 階段主要負責構建 Laravel 的 PHP 應用程式和 FastAPI Tester 的 Docker 映像。`test` 階段則運行 Laravel 的 PHPUnit 測試以及 FastAPI Tester 的 Pytest 安全測試。`security_scan` 階段會啟動 OWASP ZAP 進行動態安全掃描，針對 Laravel API 執行檢測。最後的 `report` 階段，會運行一個 Python 腳本（`generate_report.py`）來整合來自 PHPUnit、Pytest 和 ZAP 的測試與掃描結果，並將它們生成一份易於閱讀的 Markdown 綜合安全報告。這個流程旨在確保每次代碼提交都能自動進行構建、測試和安全驗證。
+**A**: 專案預期 CI/CD 流程包含 `build`、`test`、`security_scan` 和 `report` 階段（需自行撰寫 `.gitlab-ci.yml`）。`build` 構建 Laravel 和 FastAPI 的 Docker 映像；`test` 運行 PHPUnit 和 Pytest 測試；`security_scan` 使用 OWASP ZAP 掃描 API；`report` 運行 `generate_report.py`，整合測試和掃描結果，生成 Markdown 報告。流程確保代碼提交自動驗證安全性。
 
 **Q9: 專案如何生成最終的安全報告？報告中包含哪些信息？**  
-**A**: 最終的安全報告是通過一個 Python 腳本 `scripts/generate_report.py` 來生成的。這個腳本的核心功能是作為一個報告聚合器：它會解析來自 PHPUnit 的 JUnit XML 報告、FastAPI Pytest 的 JUnit XML 報告，以及 OWASP ZAP 的 JSON 報告。它會提取這些報告中的關鍵信息，例如總測試數、失敗測試數、具體測試結果（通過/失敗），以及 ZAP 發現的漏洞警報。這些信息隨後會被格式化為一個易於閱讀的 Markdown 文件（`reports/summary.md`），提供一個專案的總體安全狀態概覽。這份報告對於快速了解每次 CI 運行後專案的安全性表現至關重要。
+**A**: 安全報告由 `scripts/generate_report.py` 生成，解析 PHPUnit、Pytest 的 JUnit XML 報告和 ZAP 的 JSON 報告，提取總測試數、失敗數、測試結果和漏洞警報，格式化為 `reports/summary.md`。報告提供專案安全狀態概覽，方便 CI/CD 分析。
 
 ### 個人經驗與思考
 
 **Q10: 在開發這個專案的過程中，您遇到了哪些挑戰？是如何解決的？**  
-**A**: 在開發這個專案時，主要遇到了幾個挑戰：
-- **Docker 環境的複雜性**：初期在設定 `docker-compose.yml` 時，確保 Nginx、PHP-FPM、MariaDB 和 FastAPI Tester 之間能夠正確通信，以及卷掛載的權限問題，花了一些時間。解決方案是仔細檢查 `docker-compose.yml` 中的服務名稱、埠映射和網絡配置，確保容器之間能夠通過服務名稱互相解析，並為持久化數據和日誌文件設置了正確的卷掛載權限。
-- **Laravel API 與 FastAPI Tester 的協同**：確保 FastAPI Tester 能夠正確地對 Laravel API 發送請求並解析響應，特別是在處理 XSS 轉義後的內容時，需要仔細設計測試邏輯。這通過在 FastAPI 中使用 `httpx` 進行非同步 HTTP 請求，並在測試斷言中精確比對轉義前後的字串來解決。
-- **OWASP ZAP 的整合**：最初 ZAP 無法正確掃描 API 或無法獲取 OpenAPI 規範。後來通過仔細閱讀 ZAP 的文檔，發現可以通過 `zap-cli openapi` 命令直接提供 API 的 OpenAPI URL，這讓 ZAP 能夠更智能地探索和掃描 API 端點，大大提升了掃描的效率和準確性。
-這些挑戰都讓我對多服務架構的調試、安全性驗證的細節，以及自動化測試工具的整合有了更深的理解。
+**A**: 挑戰包括：
+- **Docker 環境複雜性**：初期配置 `docker-compose.yml` 時，服務通信和卷掛載權限有問題。解決方案是檢查服務名稱、埠映射和網絡配置，設置正確權限。
+- **Laravel 與 FastAPI 協同**：確保 FastAPI Tester 正確發送請求並解析響應，需設計精準測試邏輯。使用 `httpx` 和斷言比對轉義結果解決。
+- **OWASP ZAP 整合**：ZAP 無法掃描 OpenAPI。透過 `zap-cli openapi` 命令提供 API URL，提升掃描效率。
+這些經驗深化了對多多多多多調性和安全性驗證的理解。
 
 **Q11: 您認為這個專案還有哪些可以改進的地方？**  
-**A**: 我認為這個專案還有很多可以改進的空間：
-- **擴展安全測試覆蓋率**：目前主要針對 SQL 注入、XSS 和認證漏洞，未來可以加入更多 OWASP Top 10 或 API Security Top 10 的漏洞測試案例。
-- **增強報告的視覺化和詳細程度**：目前報告是 Markdown 格式，未來可以考慮生成互動式的 HTML 報告，或整合到像 SonarQube 這類的 SAST/DAST 報告聚合平台，提供更豐富的圖表和趨勢分析。
-- **引入 SAST 工具**：除了 DAST 和單元/功能測試，還可以考慮整合靜態應用程式安全測試（SAST）工具，在代碼層面就發現潛在的漏洞。
-- **增加前端應用**：為了更完整的演示，可以加入一個簡單的前端應用，展示攻擊和防禦的實際效果。
-- **多雲部署和監控**：將專案擴展到雲環境，並加入運行時安全監控（RASP）或 API 網關的安全策略。
-這些改進將使專案更加完善和貼近真實世界的 DevSecOps 實踐。
+**A**: 改進空間包括：
+- **擴展安全測試**：涵蓋更多 OWASP API Security 漏洞。
+- **增強報告**：生成 HTML 報告或整合到 SonarQube。
+- **引入 SAST**：使用靜態分析工具檢查代碼漏洞。
+- **前端應用**：加入前端展示攻防效果。
+- **雲部署**：支持多雲環境和運行時安全策略。
+這些改進將使專案更貼近真實 DevSecOps 實踐。
 
 ## 常見問題
-1. **為什麼無法直接運行 `init.sh`？**  
-   本倉庫不包含 `init.sh` 或完整的 Laravel 結構。請參考「安裝與使用」自行設置環境。
+1. **為什麼無法運行 `init.sh`？**  
+   本倉庫不包含 `init.sh` 或完整 Laravel 結構。請參考「安裝與使用方法」設置環境。
 
 2. **如何設置資料庫遷移？**  
-   需自行創建 `database/migrations/` 和 `database/seeders/`，可參考 Laravel 文件。
+   需自行撰寫 `database/migrations/` 和 `database/seeders/`，參考 Laravel 文件。
 
 3. **FastAPI 測試失敗怎麼辦？**  
-   確保 `requirements.txt` 中的依賴已安裝。檢查 Laravel API 是否運行在 `http://localhost:8000/api`（或 Docker 網絡中的 `nginx:80`）。
+   確保 `requirements.txt` 依賴已安裝，檢查 API 是否運行於 `http://localhost:8000/api`。
 
 4. **如何整合 OWASP ZAP？**  
-   自行設置 ZAP 容器並指向 Laravel API 的 OpenAPI 規格（需創建 `openapi.json`）。參考「運行安全測試」中的 ZAP 命令。
+   設置 ZAP 容器，指向 API 的 `openapi.json`，參考「運行安全測試」中的 ZAP 命令。
 
 ## 注意事項
-- 本專案僅提供核心代碼，需熟悉 Laravel 和 FastAPI 的開發者自行整合。
-- 建議在 Linux 環境測試以確保 Docker 網絡穩定性。
-- 若需完整 CI/CD 流程，請參考 OWASP 文件或自行撰寫 `.gitlab-ci.yml`。
+- 本專案僅提供核心代碼，需熟悉 Laravel 和 FastAPI 的開發者整合。
+- 建議在 Linux 環境測試以確保 Docker 網絡穩定。
+- 若需 CI/CD 流程，需撰寫 `.gitlab-ci.yml`。
 
 ## 聯繫與貢獻
-這是個簡單的範例專案，僅提供核心功能。若有問題或建議，歡迎在 GitHub 提交 issue 或 PR。感謝您的支持！
+這是個簡單範例，僅提供核心功能。若有問題或建議，歡迎在 GitHub 提交 issue 或 PR。感謝支持！
