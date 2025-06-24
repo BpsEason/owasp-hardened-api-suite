@@ -15,7 +15,7 @@
 
 ```mermaid
 graph TD
-    A[用戶] -->|HTTP 請求 - API 使用| B[Web Service<br/>(Nginx + PHP-FPM + Laravel API)]
+    A[用戶] -->|HTTP 請求 - API 使用| B[Web Service]
     B -->|查詢/寫入| C[MariaDB]
     A -->|訪問 Swagger UI| D[FastAPI Tester]
     D -->|模擬攻擊 - 安全測試| B
