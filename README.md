@@ -15,30 +15,28 @@
 
 ```mermaid
 graph TD
-    A[用戶] -->|HTTP 請求 - API 使用| B[Nginx]
-    B -->|代理請求| C[PHP-FPM + Laravel API]
-    C -->|查詢/寫入| D[MariaDB]
-    A -->|訪問 Swagger UI| E[FastAPI Tester]
-    E -->|模擬攻擊 - 安全測試| B
-    F[OWASP ZAP] -->|掃描 API - 安全測試| B
-    E -->|生成 Pytest 報告| G[Report Generator]
-    C -->|生成 PHPUnit 報告| G
-    F -->|生成 JSON 報告| H[ZAP Reports]
-    H --> G
-    G -->|生成 Markdown 報告| I[Reports]
+    A[用戶] -->|HTTP 請求 - API 使用| B[Web Service<br/>(Nginx + PHP-FPM + Laravel API)]
+    B -->|查詢/寫入| C[MariaDB]
+    A -->|訪問 Swagger UI| D[FastAPI Tester]
+    D -->|模擬攻擊 - 安全測試| B
+    E[OWASP ZAP] -->|掃描 API - 安全測試| B
+    D -->|生成 Pytest 報告| F[Report Generator]
+    B -->|生成 PHPUnit 報告| F
+    E -->|生成 JSON 報告| G[ZAP Reports]
+    G --> F
+    F -->|生成 Markdown 報告| H[Reports]
     subgraph Docker Network
         B
         C
         D
         E
-        F
     end
     subgraph 安全測試流程
+        D
         E
         F
         G
         H
-        I
     end
 ```
 
