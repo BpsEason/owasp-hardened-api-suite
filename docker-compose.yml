@@ -1,0 +1,65 @@
+version: '3.8'
+
+services:
+  nginx:
+    image: nginx:latest
+    ports:
+      - "8000:80"
+    volumes:
+      - ./laravel-app:/var/www/html
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf
+    depends_on:
+      - php
+      - mariadb
+    networks:
+      - app-network
+
+  php:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.php
+    volumes:
+      - ./laravel-app:/var/www/html
+    environment:
+      - DB_CONNECTION=mysql
+      - DB_HOST=mariadb
+      - DB_PORT=3306
+      - DB_DATABASE=laravel_db
+      - DB_USERNAME=user
+      - DB_PASSWORD=password
+    networks:
+      - app-network
+
+  mariadb:
+    image: mariadb:10.6
+    environment:
+      - MARIADB_ROOT_PASSWORD=root_password
+      - MARIADB_DATABASE=laravel_db
+      - MARIADB_USER=user
+      - MARIADB_PASSWORD=password
+    volumes:
+      - mariadb_data:/var/lib/mysql
+    networks:
+      - app-network
+
+  fastapi-tester:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.fastapi
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./fastapi-tester:/app
+      # 注意：zap-reports 目錄會在 CI/CD 階段被 GitLab Runner 掛載和使用，本地 Docker Compose 一般不直接掛載給 tester
+      # - ./zap-reports:/app/zap-reports 
+    depends_on:
+      - nginx # FastAPI needs to connect to nginx for testing
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  mariadb_data:

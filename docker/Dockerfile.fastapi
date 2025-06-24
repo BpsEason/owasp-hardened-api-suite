@@ -1,0 +1,20 @@
+FROM python:3.9-slim-buster
+
+WORKDIR /app
+
+COPY requirements.txt .
+
+RUN pip install --no-cache-dir -r requirements.txt
+
+# 複製整個 fastapi-tester 目錄到容器的 /app
+COPY fastapi-tester/app ./app
+COPY fastapi-tester/tests ./tests
+COPY fastapi-tester/scripts ./scripts
+COPY fastapi-tester/requirements.txt ./requirements.txt
+
+
+# 暴露 FastAPI 應用程式的埠
+EXPOSE 8001
+
+# 運行 FastAPI 應用程式
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8001"]
